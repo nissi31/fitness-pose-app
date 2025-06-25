@@ -1,14 +1,3 @@
----
-title: AI Fitness Coach
-emoji: 🏋️
-colorFrom: blue
-colorTo: pink
-sdk: gradio
-sdk_version: 5.34.2
-app_file: app.py
-pinned: false
----
-
 # 🤖 AI Fitness Coach (Gradio Space)
 
 Upload your fitness exercise video (Back Squat, Barbell Row, Overhead Press, or Jumping Jack) and get real-time form feedback.
