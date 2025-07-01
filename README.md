@@ -7,9 +7,8 @@ Upload your fitness exercise video (Back Squat, Barbell Row, Overhead Press, or 
 - See your feedback and annotated video
 
 **Model:** YOLOv8 pose estimation  
-**Author:** nissi31  
 **Framework:** Gradio
 
-> Note: Feedback is shown as time-marked text. For best results, use videos with clear, unobstructed views.
+> Note: Feedback is shown as time-marked text. For best results, use short videos of less than 5 seconds with clear, unobstructed views.
 
 ---
