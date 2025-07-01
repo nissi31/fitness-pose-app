@@ -5,8 +5,6 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-# ---- BEGIN POSE-ANALYSIS HELPERS ----
-# Place your KEYPOINT_DICT, calculate_angle, update_*_state, check_*_form functions here.
 KEYPOINT_DICT = {
     'nose': 0, 'left_eye': 1, 'right_eye': 2, 'left_ear': 3, 'right_ear': 4,
     'left_shoulder': 5, 'right_shoulder': 6, 'left_elbow': 7, 'right_elbow': 8,
@@ -95,73 +93,89 @@ def update_jumpingjack_state(kpts, tracker):
     elif tracker['state'] == "out" and avg_wrist_y > avg_shoulder_y:
         tracker['state'] = "in"; tracker['reps'] += 1
     return tracker
-# ---- END POSE-ANALYSIS HELPERS ----
 
 def analyze_fitness(video_path, exercise):
-    # Save uploaded video to a temp file if needed
-    if isinstance(video_path, tuple):  # when input is (name, bytes)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-            tmp.write(video_path[1])
-            video_path = tmp.name
+    print("analyze_fitness called")
+    try:
+        if isinstance(video_path, tuple):  # when input is (name, bytes)
+            print("Saving uploaded file...")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+                tmp.write(video_path[1])
+                video_path = tmp.name
+            print(f"Saved video to {video_path}")
 
-    cap = cv2.VideoCapture(video_path)
-    frame_w, frame_h, fps = (int(cap.get(p)) for p in [cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS])
-    out_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-    out = cv2.VideoWriter(out_video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_w, frame_h))
-    model = YOLO('yolov8s-pose.pt')
-    initial_state = 'in' if exercise == 'JumpingJack' else ('down' if exercise in ['BarbellRow', 'OverheadPress'] else 'up')
-    state_tracker = {'state': initial_state, 'reps': 0}
-    update_state_func = globals()[f"update_{exercise.lower()}_state"]
-    check_form_func = globals()[f"check_{exercise.lower()}_form"]
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print("Error: Could not open video file!")
+            return None, "Failed to open video."
+        frame_w, frame_h, fps = (int(cap.get(p)) for p in [cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS])
+        print(f"Video props: {frame_w}x{frame_h} at {fps} fps")
+        if fps == 0:
+            print("Error: Video FPS is 0!")
+            return None, "Invalid video FPS (0)."
+        out_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+        out = cv2.VideoWriter(out_video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_w, frame_h))
+        model = YOLO('yolov8s-pose.pt')
+        initial_state = 'in' if exercise == 'JumpingJack' else ('down' if exercise in ['BarbellRow', 'OverheadPress'] else 'up')
+        state_tracker = {'state': initial_state, 'reps': 0}
+        update_state_func = globals()[f"update_{exercise.lower()}_state"]
+        check_form_func = globals()[f"check_{exercise.lower()}_form"]
 
-    feedback_timeline = []
-    frame_idx = 0
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret: break
-        results = model(frame, verbose=False)
-        annotated_frame = results[0].plot()
-        form_feedback = []
-        if results[0].keypoints is not None and len(results[0].keypoints.xy) > 0:
-            kpts = results[0].keypoints.xy[0].cpu().numpy().tolist()
-            state_tracker = update_state_func(kpts, state_tracker)
-            form_feedback = check_form_func(kpts, state_tracker)
-        else:
-            form_feedback = ["No person detected"]
-        if state_tracker.get('last_rep_feedback'): form_feedback.append(state_tracker['last_rep_feedback'])
+        feedback_timeline = []
+        frame_idx = 0
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret: 
+                print("No more frames or read failed.")
+                break
+            if frame_idx % 10 == 0:
+                print(f"Processing frame {frame_idx}")
+            results = model(frame, verbose=False)
+            annotated_frame = results[0].plot()
+            form_feedback = []
+            if results[0].keypoints is not None and len(results[0].keypoints.xy) > 0:
+                kpts = results[0].keypoints.xy[0].cpu().numpy().tolist()
+                state_tracker = update_state_func(kpts, state_tracker)
+                form_feedback = check_form_func(kpts, state_tracker)
+            else:
+                form_feedback = ["No person detected"]
+            if state_tracker.get('last_rep_feedback'): form_feedback.append(state_tracker['last_rep_feedback'])
 
-        # Save feedback timestamp if any feedback
-        if form_feedback and not (len(form_feedback) == 1 and "No person detected" in form_feedback):
-            feedback_timeline.append({
-                "frame": frame_idx,
-                "timestamp": frame_idx / fps,
-                "feedback": form_feedback.copy()
-            })
-        if state_tracker.get('last_rep_feedback'): state_tracker['last_rep_feedback'] = None
-        out.write(annotated_frame)
-        frame_idx += 1
+            if form_feedback and not (len(form_feedback) == 1 and "No person detected" in form_feedback):
+                feedback_timeline.append({
+                    "frame": frame_idx,
+                    "timestamp": frame_idx / fps,
+                    "feedback": form_feedback.copy()
+                })
+            if state_tracker.get('last_rep_feedback'): state_tracker['last_rep_feedback'] = None
+            out.write(annotated_frame)
+            frame_idx += 1
 
-    cap.release()
-    out.release()
+        cap.release()
+        out.release()
+        print("Video processing complete.")
 
-    # Prepare feedback for display
-    feedback_display = ""
-    last_time = -100
-    for fb in feedback_timeline:
-        # Only show feedback if this is more than 1s after previous to avoid spamming
-        if fb["timestamp"] - last_time > 1.0:
-            t = fb["timestamp"]
-            m, s = int(t // 60), int(t % 60)
-            feedback_display += f"At {m:02d}:{s:02d} → " + " | ".join(fb["feedback"]) + "\n"
-            last_time = t
+        # Prepare feedback for display
+        feedback_display = ""
+        last_time = -100
+        for fb in feedback_timeline:
+            if fb["timestamp"] - last_time > 1.0:
+                t = fb["timestamp"]
+                m, s = int(t // 60), int(t % 60)
+                feedback_display += f"At {m:02d}:{s:02d} → " + " | ".join(fb["feedback"]) + "\n"
+                last_time = t
 
-    return out_video_path, feedback_display.strip()
-
-exercises = ["BackSquat", "BarbellRow", "OverheadPress", "JumpingJack"]
+        print("Returning output video and feedback.")
+        return out_video_path, feedback_display.strip()
+    except Exception as e:
+        print(f"Exception in analyze_fitness: {e}")
+        return None, f"Processing failed: {e}"
+   
 
 title = "🤖 AI Fitness Coach"
 description = "Upload your exercise video and get real-time form feedback! Feedback is shown with time markers. (YOLOv8 pose, works best with clear videos and single person in frame.)"
 
+exercises = ["BackSquat", "BarbellRow", "OverheadPress", "JumpingJack"]
 demo = gr.Interface(
     fn=analyze_fitness,
     inputs=[
@@ -179,4 +193,3 @@ demo = gr.Interface(
 
 if __name__ == "__main__":
     demo.launch()
-    
